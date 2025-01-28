@@ -19,6 +19,20 @@ go.work
 # Kubernetes Generated files - skip generated files, except for vendored files
 !vendor/**/zz_generated.*
 
+#Operator SDK generated files
+/bundle/
+bundle.Dockerfile
+config/manager/kustomization.yaml
+
+# editor and IDE paraphernalia
+.idea
+*.swp
+*.swo
+*~
+
+# Common CI tools repository
+CI_TOOLS_REPO
+
 # editor and IDE paraphernalia
 .idea
 .vscode
