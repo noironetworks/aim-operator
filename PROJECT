@@ -10,4 +10,14 @@ plugins:
   scorecard.sdk.operatorframework.io/v2: {}
 projectName: aim-operator
 repo: github.com/noironetworks/aci-integration-module-operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: cisco.com
+  group: api
+  kind: CiscoAciAim
+  path: github.com/noironetworks/aci-integration-module-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"
