@@ -65,7 +65,7 @@ endif
 # Be aware that the target commands are only tested with Docker which is
 # scaffolded by default. However, you might want to replace it to use other
 # tools. (i.e. podman)
-CONTAINER_TOOL ?= docker
+CONTAINER_TOOL ?= podman
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -304,7 +304,7 @@ endif
 BUNDLE_IMGS ?= $(BUNDLE_IMG)
 
 # The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
-CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
+CATALOG_IMG ?= $(IMAGE_TAG_BASE)-index:v$(VERSION)
 
 # Set CATALOG_BASE_IMG to an existing catalog image tag to add $BUNDLE_IMGS to that image.
 ifneq ($(origin CATALOG_BASE_IMG), undefined)
@@ -322,3 +322,38 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+
+# CI tools repo for running tests$
+CI_TOOLS_REPO := https://github.com/openstack-k8s-operators/openstack-k8s-operators-ci
+CI_TOOLS_REPO_DIR = $(shell pwd)/CI_TOOLS_REPO
+.PHONY: get-ci-tools
+get-ci-tools:
+	if [ -d  "$(CI_TOOLS_REPO_DIR)" ]; then \
+               echo "Ci tools exists"; \
+               pushd "$(CI_TOOLS_REPO_DIR)"; \
+               git pull --rebase; \
+               popd; \
+       else \
+               git clone $(CI_TOOLS_REPO) "$(CI_TOOLS_REPO_DIR)"; \
+       fi
+
+# Run go fmt against code
+gofmt: get-ci-tools
+	$(CI_TOOLS_REPO_DIR)/test-runner/gofmt.sh
+
+# Run go vet against code
+govet: get-ci-tools
+	$(CI_TOOLS_REPO_DIR)/test-runner/govet.sh
+
+# Run go test against code
+gotest: get-ci-tools
+	$(CI_TOOLS_REPO_DIR)/test-runner/gotest.sh
+
+# Run golangci-lint test against code
+golangci: get-ci-tools
+	$(CI_TOOLS_REPO_DIR)/test-runner/golangci.sh
+
+# Run go lint against code
+golint: get-ci-tools
+	PATH=$(GOBIN):$(PATH); $(CI_TOOLS_REPO_DIR)/test-runner/golint.sh
