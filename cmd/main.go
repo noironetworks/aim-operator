@@ -47,8 +47,10 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
+	utilruntime.Must(mariadbv1.AddToScheme(scheme))
+	utilruntime.Must(rabbitmqv1.AddToScheme(scheme))
 	utilruntime.Must(apiv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(topologyv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -92,10 +94,6 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-	webhookServer := webhook.NewServer(webhook.Options{
-		TLSOpts: tlsOpts,
-	})
-
 	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
 	// More info:
 	// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/metrics/server
@@ -121,9 +119,13 @@ func main() {
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
+		Scheme:  scheme,
+		Metrics: metricsServerOptions,
+		WebhookServer: webhook.NewServer(
+			webhook.Options{
+				Port:    9443,
+				TLSOpts: []func(config *tls.Config){disableHTTP2},
+			}),
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "653ba569.cisco.com",
@@ -151,11 +153,17 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "CiscoAciAim")
 		os.Exit(1)
 	}
+
+	// Acquire environmental defaults and initialize operator defaults with them
+	apiv1alpha1.SetupDefaults()
+
+	checker := healthz.Ping
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err = (&apiv1alpha1.CiscoAciAim{}).SetupWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "CiscoAciAim")
 			os.Exit(1)
 		}
+		checker = mgr.GetWebhookServer().StartedChecker()
 	}
 	// +kubebuilder:scaffold:builder
 
