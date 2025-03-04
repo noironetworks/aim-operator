@@ -17,7 +17,7 @@ limitations under the License.
 // Package v1alpha1 contains API Schema definitions for the api v1alpha1 API group
 // +kubebuilder:object:generate=true
 // +groupName=api.cisco.com
-package v1alpha1
+package ciscoaciaim
 
 import (
 	"k8s.io/apimachinery/pkg/runtime/schema"

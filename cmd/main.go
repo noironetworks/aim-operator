@@ -47,8 +47,10 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
+	utilruntime.Must(mariadbv1.AddToScheme(scheme))
+	utilruntime.Must(rabbitmqv1.AddToScheme(scheme))
 	utilruntime.Must(apiv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(topologyv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -151,6 +153,10 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "CiscoAciAim")
 		os.Exit(1)
 	}
+
+	// Acquire environmental defaults and initialize operator defaults with them
+	apiv1alpha1.SetupDefaults()
+
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err = (&apiv1alpha1.CiscoAciAim{}).SetupWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "CiscoAciAim")
