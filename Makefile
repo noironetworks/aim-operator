@@ -357,3 +357,18 @@ golangci: get-ci-tools
 # Run go lint against code
 golint: get-ci-tools
 	PATH=$(GOBIN):$(PATH); $(CI_TOOLS_REPO_DIR)/test-runner/golint.sh
+
+# Used for webhook testing
+# The configure_local_webhook.sh script below will remove any OLM webhooks
+# for the operator and also scale its deployment replicas down to 0 so that
+# the operator can run locally.
+# We will attempt to catch SIGINT/SIGTERM and clean up the local webhooks,
+# but it may be necessary to manually run ./hack/clean_local_webhook.sh
+# before deploying with OLM again for other untrappable signals.
+SKIP_CERT ?=false
+.PHONY: run-with-webhook
+run-with-webhook: export METRICS_PORT?=8080
+run-with-webhook: export HEALTH_PORT?=8081
+run-with-webhook: manifests generate fmt vet ## Run a controller from your host.
+	/bin/bash hack/run_with_local_webhook.sh
+

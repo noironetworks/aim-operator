@@ -188,3 +188,49 @@ func (r *CiscoAciAimReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&apiv1alpha1.CiscoAciAim{}).
 		Complete(r)
 }
+
+func (r *CiscoAciAimReconciler) generateServiceConfig(
+	ctx context.Context,
+	h *helper.Helper,
+	instance *ciscoaciaimv1.CiscoAciAim,
+	envVars *map[string]env.Setter,
+	serviceLabels map[string]string,
+	db *mariadbv1.Database,
+) error {
+	Log := r.GetLogger(ctx)
+	Log.Info("generateServiceConfigMaps - CiscoAciAim controller")
+
+	// create Secret required for barbican input
+	labels := labels.GetLabels(instance, labels.GetGroupLabel(ciscoaciaim.ServiceName), serviceLabels)
+
+	customData := map[string]string{
+		ciscoaciaim.CustomConfigFileName: instance.Spec.CustomServiceConfig,
+	}
+
+	for key, data := range instance.Spec.DefaultConfigOverwrite {
+		customData[key] = data
+	}
+
+	cms := []util.Template{
+		// ScriptsConfigMap
+		{
+			Name:         fmt.Sprintf("%s-scripts", instance.Name),
+			Namespace:    instance.Namespace,
+			Type:         util.TemplateTypeScripts,
+			InstanceType: instance.Kind,
+			Labels:       cmLabels,
+		},
+		// ConfigMap
+		{
+			Name:               fmt.Sprintf("%s-config-data", instance.Name),
+			Namespace:          instance.Namespace,
+			Type:               util.TemplateTypeConfig,
+			InstanceType:       instance.Kind,
+			CustomData:         customData,
+			ConfigOptions:      templateParameters,
+			Labels:             cmLabels,
+			AdditionalTemplate: extraTemplates,
+		},
+	}
+	return secret.EnsureSecrets(ctx, h, instance, cms, envVars)
+}

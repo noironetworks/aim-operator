@@ -36,9 +36,9 @@ func Deployment(
 	envVars["KOLLA_CONFIG_STRATEGY"] = env.SetValue("COPY_ALWAYS")
 	envVars["CONFIG_HASH"] = env.SetValue(configHash)
 
-	// create Volume and VolumeMounts
-	volumes := getVolumes(instance)
-	volumeMounts := getVolumeMounts()
+	// create Volumes and VolumeMounts
+	volumes := getVolumes(instance.Name, instance.Spec.ExtraMounts, CiscoAciAimPropagation)
+	volumeMounts := getVolumeMounts(instance.Spec.ExtraMounts, CiscoAciAimPropagation)
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
