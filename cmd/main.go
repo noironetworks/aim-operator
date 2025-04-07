@@ -35,6 +35,10 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	mariadbv1 "github.com/openstack-k8s-operators/mariadb-operator/api/v1beta1"
+	rabbitmqv1 "github.com/openstack-k8s-operators/infra-operator/apis/rabbitmq/v1beta1"
+	topologyv1 "github.com/openstack-k8s-operators/infra-operator/apis/topology/v1beta1"
+
 	apiv1alpha1 "github.com/noironetworks/aci-integration-module-operator/api/v1alpha1"
 	"github.com/noironetworks/aci-integration-module-operator/internal/controller"
 	// +kubebuilder:scaffold:imports

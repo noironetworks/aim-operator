@@ -32,9 +32,6 @@ func (r *CiscoAciAimReconciler) GetClient() client.Client {
 	return r.Client
 }
 
-// GetKClient -
-func (r *CiscoAciAimReconciler) GetKClient() kubernetes.Interface {
-	return r.Kclient
 }
 
 // GetScheme -
@@ -45,8 +42,13 @@ func (r *CiscoAciAimReconciler) GetScheme() *runtime.Scheme {
 // CiscoAciAimReconciler reconciles a CiscoAciAim object
 type CiscoAciAimReconciler struct {
 	client.Client
-	Kclient kubernetes.Interface
 	Scheme  *runtime.Scheme
+}
+
+
+// GetLog returns a logger object with a prefix of "conroller.name" and aditional controller context fields
+func (r *CiscoAciAimReconciler) GetLogger(ctx context.Context) logr.Logger {
+	return log.FromContext(ctx).WithName("Controllers").WithName("CiscoAciAimController")
 }
 
 // +kubebuilder:rbac:groups=api.cisco.com,resources=ciscoaciaims,verbs=get;list;watch;create;update;patch;delete
@@ -94,8 +96,10 @@ func (r *CiscoAciAimReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		Log,
 	)
 	if err != nil {
+        Log.Error(err, "Failed to create lib-common Helper")
 		return ctrl.Result{}, err
 	}
+	Log.Info("Reconciling")
 
 	//
 	// initialize status
