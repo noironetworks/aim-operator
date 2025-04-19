@@ -73,6 +73,8 @@ func (r *CiscoAciAimReconciler) GetLogger(ctx context.Context) logr.Logger {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 func (r *CiscoAciAimReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	Log := r.GetLogger(ctx)
+
+    //Fetch the ciscoAciAim instance that has to be reconciled
 	instance := &ciscoaciaimv1.CiscoAciAim{}
 
 	err := r.Client.Get(ctx, req.NamespacedName, instance)
@@ -101,17 +103,15 @@ func (r *CiscoAciAimReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 	Log.Info("Reconciling")
 
-	//
-	// initialize status
-	//
-	isNewInstance := instance.Status.Conditions == nil
-	if isNewInstance {
-		instance.Status.Conditions = condition.Conditions{}
-	}
-
 	// Save a copy of the condtions so that we can restore the LastTransitionTime
 	// when a condition's state doesn't change.
 	savedConditions := instance.Status.Conditions.DeepCopy()
+
+	// initialize status fields
+	if err = r.initStatus(instance); err != nil {
+		return ctrl.Result{}, err
+	}
+	instance.Status.ObservedGeneration = instance.Generation
 
 	// Always patch the instance status when exiting this function so we can persist any changes.
 	defer func() {
@@ -134,6 +134,59 @@ func (r *CiscoAciAimReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			return
 		}
 	}()
+
+	// If we're not deleting this and the service object doesn't have our finalizer, add it.
+	if (instance.DeletionTimestamp.IsZero() && controllerutil.AddFinalizer(instance, helper.GetFinalizer())) || isNewInstance {
+		// Register overall status immediately to have an early feedback e.g. in the cli
+		return ctrl.Result{}, nil
+	}
+
+	if instance.Status.Hash == nil {
+		instance.Status.Hash = map[string]string{}
+	}
+
+	if instance.Status.CiscoAciAimVolumesReadyCounts == nil {
+		instance.Status.CiscoAciAimVolumesReadyCounts = map[string]int32{}
+	}
+
+	if !instance.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.reconcileDelete(ctx, h, instance)
+	}
+	// Handle non-deleted clusters
+	return r.reconcileNormal(ctx, instance, helper)
+}
+"""
+	// all our input checks out so report InputReady
+	instance.Status.Conditions.MarkTrue(condition.InputReadyCondition, condition.InputReadyMessage)
+"""
+
+func (r *CiscoAciAimReconciler) initStatus(
+	instance *ciscoaciaimv1.CiscoAciAim,
+) error {
+	if err := r.initConditions(instance); err != nil {
+		return err
+	}
+
+	// NOTE(gibi): initialize the rest of the status fields here
+	// so that the reconcile loop later can assume they are not nil.
+	if instance.Status.Hash == nil {
+		instance.Status.Hash = map[string]string{}
+	}
+	if instance.Status.NetworkAttachments == nil {
+		instance.Status.NetworkAttachments = map[string][]string{}
+	}
+
+	return nil
+}
+
+
+func (r *CiscoAciAimReconciler) initConditions(
+	instance *ciscoaciaimv1.CiscoAciAim,
+) error {
+	if instance.Status.Conditions == nil {
+		instance.Status.Conditions = condition.Conditions{}
+	}
+
 	//
 	// Conditions init
 	//
@@ -146,53 +199,143 @@ func (r *CiscoAciAimReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		condition.UnknownCondition(condition.InputReadyCondition, condition.InitReason, condition.InputReadyInitMessage),
 		condition.UnknownCondition(condition.ServiceConfigReadyCondition, condition.InitReason, condition.ServiceConfigReadyInitMessage),
 		condition.UnknownCondition(condition.DeploymentReadyCondition, condition.InitReason, condition.DeploymentReadyInitMessage),
-		// service account, role, rolebinding conditions
+		// service account
 		condition.UnknownCondition(condition.ServiceAccountReadyCondition, condition.InitReason, condition.ServiceAccountReadyInitMessage),
-		condition.UnknownCondition(condition.RoleReadyCondition, condition.InitReason, condition.RoleReadyInitMessage),
-		condition.UnknownCondition(condition.RoleBindingReadyCondition, condition.InitReason, condition.RoleBindingReadyInitMessage),
 	)
 
+    // Init Topology condition if there's a reference
+    if instance.Spec.TopologyRef != nil {
+        c := condition.UnknownCondition(condition.TopologyReadyCondition, condition.InitReason, condition.TopologyReadyInitMessage)
+        cl.Set(c)
+    }
 	instance.Status.Conditions.Init(&cl)
-	instance.Status.ObservedGeneration = instance.Generation
-
-	// If we're not deleting this and the service object doesn't have our finalizer, add it.
-	if instance.DeletionTimestamp.IsZero() && controllerutil.AddFinalizer(instance, helper.GetFinalizer()) || isNewInstance {
-		return ctrl.Result{}, nil
-	}
-
-	if instance.Status.Hash == nil {
-		instance.Status.Hash = map[string]string{}
-	}
-
-	// Init Topology condition if there's a reference
-	if instance.Spec.TopologyRef != nil {
-		c := condition.UnknownCondition(condition.TopologyReadyCondition, condition.InitReason, condition.TopologyReadyInitMessage)
-		cl.Set(c)
-	}
-
-	// Handle service delete
-	if !instance.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, instance, helper)
-	}
-
-	// Handle non-deleted clusters
-	return r.reconcileNormal(ctx, instance, helper)
+	return nil
 }
+
 
 // fields to index to reconcile when change
 const (
 	passwordSecretField      = ".spec.secret"
-	rabbitmqClusterNameField = ".spec.rabbitmqClusterName"
+	transportURLSecretField  = ".spec.transportURLSecret"
+	customServiceConfigField = ".spec.customServiceConfigSecrets"
 	topologyField            = ".spec.topologyRef.Name"
 )
 
+var (
+	allWatchFields = []string{
+		passwordSecretField,
+		transportURLSecretField,
+		customServiceConfigField,
+		topologyField,
+	}
+
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *CiscoAciAimReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// index passwordSecretField
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &ciscoaciaimv1.CiscoAciAin{}, passwordSecretField, func(rawObj client.Object) []string {
+		// Extract the secret name from the spec, if one is provided
+		cr := rawObj.(*ciscoaciaimv1.CiscoAciAim)
+		if cr.Spec.Secret == "" {
+			return nil
+		}
+		return []string{cr.Spec.Secret}
+	}); err != nil {
+		return err
+	}
+	// index customServiceConfigSecrets
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &ciscoaciaimv1.CiscoAciAim{}, customServiceConfigField, func(rawObj client.Object) []string {
+		// Extract the secret name from the spec, if one is provided
+		cr := rawObj.(*ciscoaciaimv1.CiscoAciAim)
+		if cr.Spec.CustomServiceConfigSecrets == nil {
+			return nil
+		}
+		return cr.Spec.CustomServiceConfigSecrets
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&apiv1alpha1.CiscoAciAim{}).
+		Owns(&rabbitmqv1.TransportURL{}).
+		Owns(&mariadbv1.MariaDBDatabase{}).
+		Owns(&mariadbv1.MariaDBAccount{}).
+		Owns(&corev1.Secret{}).
 		Complete(r)
 }
 
+func (r *CiscoAciAimReconciler) reconcileDelete(ctx context.Context, instance *ciscoaciaimv1.CiscoAciAim, helper *helper.Helper) (ctrl.Result, error) {
+	r.Log.Info("Reconciling CiscoAciAim delete")
+
+	// remove db finalizer first
+	db, err := mariadbv1.GetDatabaseByNameAndAccount(ctx, helper, ciscoaciaim.DatabaseCRName, instance.Spec.DatabaseAccount, instance.Namespace)
+	if err != nil && !k8s_errors.IsNotFound(err) {
+		return ctrl.Result{}, err
+	}
+
+	if !k8s_errors.IsNotFound(err) {
+		if err := db.DeleteFinalizer(ctx, helper); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Service is deleted so remove the finalizer.
+	controllerutil.RemoveFinalizer(instance, helper.GetFinalizer())
+	r.Log.Info("Reconciled CiscoAciAim delete successfully")
+
+	return ctrl.Result{}, nil
+}
+
+
+func (r *CiscoAciAimReconciler) reconcileNormal(ctx context.Context, instance *ciscoaciaimv1.CiscoAciAim, helper *helper.Helper) (ctrl.Result, error) {
+	r.Log.Info("Reconciling Service")
+	// Service account, role, binding
+	rbacRules := []rbacv1.PolicyRule{
+		{
+			APIGroups:     []string{"security.openshift.io"},
+			ResourceNames: []string{"anyuid"},
+			Resources:     []string{"securitycontextconstraints"},
+			Verbs:         []string{"use"},
+		},
+		{
+			APIGroups: []string{""},
+			Resources: []string{"pods"},
+			Verbs:     []string{"create", "get", "list", "watch", "update", "patch", "delete"},
+		},
+	}
+	rbacResult, err := common_rbac.ReconcileRbac(ctx, helper, instance, rbacRules)
+	if err != nil || (rbacResult != ctrl.Result{}) {
+		return rbacResult, err
+	}
+    // ensure MariaDBAccount exists.  This account record may be created by
+    // openstack-operator or the cloud operator up front without a specific
+    // MariaDBDatabase configured yet.   Otherwise, a MariaDBAccount CR is
+    // created here with a generated username as well as a secret with
+    // generated password.   The MariaDBAccount is created without being
+    // yet associated with any MariaDBDatabase.
+    _, _, err = mariadbv1.EnsureMariaDBAccount(
+        ctx, h, instance.Spec.DatabaseAccount,
+        instance.Namespace, false, ciscoaciaim.DatabaseName,
+    )
+
+    if err != nil {
+        instance.Status.Conditions.Set(condition.FalseCondition(
+            mariadbv1.MariaDBAccountReadyCondition,
+            condition.ErrorReason,
+            condition.SeverityWarning,
+            mariadbv1.MariaDBAccountNotReadyMessage,
+            err.Error()))
+
+        return ctrl.Result{}, err
+    }
+    instance.Status.Conditions.MarkTrue(
+        mariadbv1.MariaDBAccountReadyCondition,
+        mariadbv1.MariaDBAccountReadyMessage,
+    )
+
+    Log.Info("Successfully reconciled")
+    return ctrl.Result{}, nil
+}
 func (r *CiscoAciAimReconciler) generateServiceConfig(
 	ctx context.Context,
 	h *helper.Helper,
